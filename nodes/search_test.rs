@@ -231,6 +231,30 @@ mod tests {
     }
 
     #[test]
+    fn test_search_deeply_nested_query_is_rejected_not_a_stack_overflow() {
+        // Regression: tantivy's recursive-descent query parser has no depth
+        // limit of its own, so a syntactically valid but deeply nested query
+        // can overflow the call stack and abort the whole process — a crash
+        // no Result can catch. This must be rejected BEFORE parsing.
+        let ax = test_context();
+        let nested = format!("{}term{}", "(".repeat(200), ")".repeat(200));
+        let input =
+            SearchRequest { documents: vec![doc("a", "hi")], query: nested, ..Default::default() };
+        let result = search(&ax, input).unwrap();
+        assert_eq!(result.error, "QUERY_TOO_DEEPLY_NESTED");
+    }
+
+    #[test]
+    fn test_search_oversized_query_is_structured_error() {
+        let ax = test_context();
+        let huge_query = "term ".repeat(3000); // well over 10,000 bytes
+        let input =
+            SearchRequest { documents: vec![doc("a", "hi")], query: huge_query, ..Default::default() };
+        let result = search(&ax, input).unwrap();
+        assert_eq!(result.error, "QUERY_TOO_LARGE");
+    }
+
+    #[test]
     fn test_search_too_many_documents_is_structured_error() {
         let ax = test_context();
         let documents: Vec<Document> = (0..1001).map(|i| doc(&i.to_string(), "x")).collect();

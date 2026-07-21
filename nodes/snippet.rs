@@ -22,8 +22,8 @@ pub fn snippet(
     if input.text.len() > ftsutil::MAX_TEXT_BYTES {
         return Ok(SnippetResponse { error: "TEXT_TOO_LARGE".to_string(), ..Default::default() });
     }
-    if input.query.trim().is_empty() {
-        return Ok(SnippetResponse { error: "EMPTY_QUERY".to_string(), ..Default::default() });
+    if let Err(code) = ftsutil::validate_query(&input.query) {
+        return Ok(SnippetResponse { error: code.to_string(), ..Default::default() });
     }
     let analyzer_name = match ftsutil::normalize_analyzer(&input.analyzer) {
         Ok(n) => n,

@@ -140,6 +140,20 @@ mod tests {
     }
 
     #[test]
+    fn test_explain_deeply_nested_query_is_rejected_not_a_stack_overflow() {
+        let ax = test_context();
+        let nested = format!("{}term{}", "(".repeat(200), ")".repeat(200));
+        let input = ExplainRequest {
+            documents: vec![doc("d0", "hello world")],
+            query: nested,
+            analyzer: String::new(),
+            target_id: "d0".to_string(),
+        };
+        let result = explain(&ax, input).unwrap();
+        assert_eq!(result.error, "QUERY_TOO_DEEPLY_NESTED");
+    }
+
+    #[test]
     fn test_explain_empty_documents_is_structured_error() {
         let ax = test_context();
         let input = ExplainRequest {

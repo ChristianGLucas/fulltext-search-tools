@@ -21,8 +21,8 @@ pub fn explain(
     if let Err(code) = ftsutil::validate_documents(&input.documents) {
         return Ok(ExplainResponse { error: code.to_string(), ..Default::default() });
     }
-    if input.query.trim().is_empty() {
-        return Ok(ExplainResponse { error: "EMPTY_QUERY".to_string(), ..Default::default() });
+    if let Err(code) = ftsutil::validate_query(&input.query) {
+        return Ok(ExplainResponse { error: code.to_string(), ..Default::default() });
     }
     if input.target_id.is_empty() {
         return Ok(ExplainResponse { error: "TARGET_NOT_FOUND".to_string(), ..Default::default() });

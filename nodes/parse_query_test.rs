@@ -117,6 +117,16 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_query_deeply_nested_query_is_rejected_not_a_stack_overflow() {
+        let ax = test_context();
+        let nested = format!("{}term{}", "(".repeat(200), ")".repeat(200));
+        let input = ParseQueryRequest { query: nested, analyzer: String::new() };
+        let result = parse_query(&ax, input).unwrap();
+        assert!(!result.valid);
+        assert_eq!(result.error, "QUERY_TOO_DEEPLY_NESTED");
+    }
+
+    #[test]
     fn test_parse_query_malformed_syntax_is_invalid_not_a_crash() {
         let ax = test_context();
         let input = ParseQueryRequest { query: "field:[1 TO".to_string(), analyzer: String::new() };

@@ -144,6 +144,15 @@ mod tests {
     }
 
     #[test]
+    fn test_snippet_deeply_nested_query_is_rejected_not_a_stack_overflow() {
+        let ax = test_context();
+        let nested = format!("{}term{}", "(".repeat(200), ")".repeat(200));
+        let input = SnippetRequest { text: "hi there".to_string(), query: nested, ..Default::default() };
+        let result = snippet(&ax, input).unwrap();
+        assert_eq!(result.error, "QUERY_TOO_DEEPLY_NESTED");
+    }
+
+    #[test]
     fn test_snippet_malformed_query_returns_structured_error_not_panic() {
         let ax = test_context();
         let input = SnippetRequest {

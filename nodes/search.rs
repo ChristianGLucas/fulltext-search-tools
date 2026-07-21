@@ -24,8 +24,8 @@ pub fn search(
     if let Err(code) = ftsutil::validate_documents(&input.documents) {
         return Ok(SearchResponse { error: code.to_string(), ..Default::default() });
     }
-    if input.query.trim().is_empty() {
-        return Ok(SearchResponse { error: "EMPTY_QUERY".to_string(), ..Default::default() });
+    if let Err(code) = ftsutil::validate_query(&input.query) {
+        return Ok(SearchResponse { error: code.to_string(), ..Default::default() });
     }
     let analyzer_name = match ftsutil::normalize_analyzer(&input.analyzer) {
         Ok(n) => n,

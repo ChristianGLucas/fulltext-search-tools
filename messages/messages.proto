@@ -30,8 +30,13 @@
 // value exactly, e.g. query `"Exact Match"`.
 //
 // SIZE BOUNDS. Per call: at most 1,000 documents, each at most 1 MiB of text,
-// combined at most 8 MiB. Oversized input returns a structured `error`
-// instead of building the index.
+// combined at most 8 MiB. Every `query` string, on every node, is at most
+// 10,000 bytes AND at most 64 levels of `(`/`[`/`{` nesting — checked before
+// the query ever reaches the parser, because a syntactically valid but
+// pathologically deep query can otherwise overflow the parser's call stack
+// (a crash no error return can catch, so it must be prevented, not handled).
+// Oversized/too-deep input returns a structured `error` (`QUERY_TOO_LARGE`,
+// `QUERY_TOO_DEEPLY_NESTED`) instead of ever being parsed.
 
 syntax = "proto3";
 
@@ -108,8 +113,8 @@ message SearchResponse {
   // of hits returned when limit truncated the result).
   int32 total_matches = 2;
   // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY, TOO_MANY_DOCUMENTS,
-  // DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE, INVALID_ANALYZER,
-  // QUERY_PARSE_ERROR); empty on success.
+  // DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE, INVALID_ANALYZER, QUERY_TOO_LARGE,
+  // QUERY_TOO_DEEPLY_NESTED, QUERY_PARSE_ERROR); empty on success.
   string error = 3;
 }
 
@@ -218,7 +223,8 @@ message SnippetResponse {
   // snippet substring), in ascending order.
   repeated Range highlights = 2;
   // Structured error code (EMPTY_TEXT, EMPTY_QUERY, TEXT_TOO_LARGE,
-  // INVALID_ANALYZER, QUERY_PARSE_ERROR); empty on success.
+  // INVALID_ANALYZER, QUERY_TOO_LARGE, QUERY_TOO_DEEPLY_NESTED,
+  // QUERY_PARSE_ERROR); empty on success.
   string error = 3;
 }
 
@@ -254,7 +260,7 @@ message ExplainResponse {
   string explanation = 3;
   // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY,
   // TOO_MANY_DOCUMENTS, DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE,
-  // INVALID_ANALYZER, QUERY_PARSE_ERROR, TARGET_NOT_FOUND); empty on
-  // success.
+  // INVALID_ANALYZER, QUERY_TOO_LARGE, QUERY_TOO_DEEPLY_NESTED,
+  // QUERY_PARSE_ERROR, TARGET_NOT_FOUND); empty on success.
   string error = 4;
 }

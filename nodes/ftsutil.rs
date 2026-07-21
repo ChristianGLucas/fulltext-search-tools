@@ -20,10 +20,39 @@ pub const MAX_DOCUMENTS: usize = 1000;
 pub const MAX_DOCUMENT_BYTES: usize = 1_048_576; // 1 MiB per document
 pub const MAX_TOTAL_BYTES: usize = 8_388_608; // 8 MiB combined
 pub const MAX_TEXT_BYTES: usize = 1_048_576; // 1 MiB for a standalone text input
+pub const MAX_QUERY_BYTES: usize = 10_000; // generous for any real query string
+pub const MAX_QUERY_NESTING_DEPTH: usize = 64; // tantivy's query parser recurses per nesting level
 pub const DEFAULT_LIMIT: i32 = 10;
 pub const MAX_LIMIT: i32 = 200;
 pub const DEFAULT_SNIPPET_CHARS: usize = 200;
 pub const VALID_ANALYZERS: [&str; 4] = ["default", "en_stem", "whitespace", "raw"];
+
+/// Bound-check a query string BEFORE it ever reaches tantivy's
+/// recursive-descent query parser. tantivy's grammar recurses per level of
+/// `(`/`[`/`{` nesting with no depth limit of its own, so a syntactically
+/// valid but pathologically deep query (e.g. thousands of nested parens) can
+/// blow the call stack and abort the whole process — a crash no `Result`
+/// can catch, so it must be prevented here, before parsing, not caught after.
+pub fn validate_query(query: &str) -> Result<(), &'static str> {
+    if query.trim().is_empty() {
+        return Err("EMPTY_QUERY");
+    }
+    if query.len() > MAX_QUERY_BYTES {
+        return Err("QUERY_TOO_LARGE");
+    }
+    let mut depth: i64 = 0;
+    for c in query.chars() {
+        match c {
+            '(' | '[' | '{' => depth += 1,
+            ')' | ']' | '}' => depth = (depth - 1).max(0),
+            _ => {}
+        }
+        if depth as usize > MAX_QUERY_NESTING_DEPTH {
+            return Err("QUERY_TOO_DEEPLY_NESTED");
+        }
+    }
+    Ok(())
+}
 
 /// Validate `analyzer`, defaulting empty to "default". Returns the resolved
 /// name or a structured error code.

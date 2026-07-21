@@ -18,6 +18,9 @@ pub fn parse_query(
 ) -> Result<ParseQueryResponse, Box<dyn std::error::Error>> {
     let _ = ax;
 
+    if let Err(code) = ftsutil::validate_query(&input.query) {
+        return Ok(ParseQueryResponse { valid: false, error: code.to_string(), ..Default::default() });
+    }
     let analyzer_name = match ftsutil::normalize_analyzer(&input.analyzer) {
         Ok(n) => n,
         Err(code) => {
