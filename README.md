@@ -71,6 +71,21 @@ MiB combined. Per `Tokenize`/`Snippet` call: at most 1 MiB of text. Oversized
 input returns a structured error (`TOO_MANY_DOCUMENTS`, `DOCUMENT_TOO_LARGE`,
 `INPUT_TOO_LARGE`, `TEXT_TOO_LARGE`) instead of building the index.
 
+Every `query` string, on every node, is capped at 10,000 bytes and 12 levels
+of `(`/`[`/`{` nesting, checked before the query ever reaches the parser
+(`QUERY_TOO_LARGE` / `QUERY_TOO_DEEPLY_NESTED`). This exists because tantivy's
+query grammar has an empirically-confirmed **exponential-time** worst case for
+certain nested, operator-less clause groupings (e.g. bare `((((term))))` or
+nested quoted phrases) — not linear recursion depth, but combinatorial
+ambiguity resolution: ~300µs at 4 levels, ~3ms at 8, ~45ms at 12, ~720ms at
+16, and it had not returned after 3 seconds at 20 on ordinary hardware. The
+same nesting depth WITH explicit `AND`/`OR` between clauses stays linear and
+cheap past 24 levels — real, human-written boolean queries are unaffected.
+Because a fixed depth heuristic cannot be proven to catch every possible
+expensive shape in a third-party grammar, every parse additionally runs under
+a 1.5-second wall-clock deadline (`QUERY_TOO_COMPLEX` if it fires) — a caller
+never waits indefinitely for a response, regardless of what triggers the cost.
+
 ## Correctness
 
 BM25 scoring is checked in the test suite against the textbook

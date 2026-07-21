@@ -32,11 +32,13 @@ pub fn snippet(
 
     let (schema, text_field) = ftsutil::build_text_only_schema(&analyzer_name);
     let query_parser = QueryParser::new(schema, vec![text_field], TokenizerManager::default());
-    let query = match query_parser.parse_query(&input.query) {
-        Ok(q) => q,
-        Err(e) => {
+    let query_string = input.query.clone();
+    let query = match ftsutil::parse_with_timeout(move || query_parser.parse_query(&query_string)) {
+        Ok(Ok(q)) => q,
+        Ok(Err(e)) => {
             return Ok(SnippetResponse { error: format!("QUERY_PARSE_ERROR: {e}"), ..Default::default() })
         }
+        Err(code) => return Ok(SnippetResponse { error: code.to_string(), ..Default::default() }),
     };
 
     let terms = ftsutil::collect_all_terms(query.as_ref());

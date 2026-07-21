@@ -40,11 +40,13 @@ pub fn explain(
     let reader = index.reader()?;
     let searcher = reader.searcher();
     let query_parser = QueryParser::for_index(&index, vec![fields.text]);
-    let query = match query_parser.parse_query(&input.query) {
-        Ok(q) => q,
-        Err(e) => {
+    let query_string = input.query.clone();
+    let query = match ftsutil::parse_with_timeout(move || query_parser.parse_query(&query_string)) {
+        Ok(Ok(q)) => q,
+        Ok(Err(e)) => {
             return Ok(ExplainResponse { error: format!("QUERY_PARSE_ERROR: {e}"), ..Default::default() })
         }
+        Err(code) => return Ok(ExplainResponse { error: code.to_string(), ..Default::default() }),
     };
 
     let doc_address = match ftsutil::find_by_id(&searcher, fields.id, &input.target_id) {

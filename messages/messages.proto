@@ -31,12 +31,14 @@
 //
 // SIZE BOUNDS. Per call: at most 1,000 documents, each at most 1 MiB of text,
 // combined at most 8 MiB. Every `query` string, on every node, is at most
-// 10,000 bytes AND at most 64 levels of `(`/`[`/`{` nesting — checked before
-// the query ever reaches the parser, because a syntactically valid but
-// pathologically deep query can otherwise overflow the parser's call stack
-// (a crash no error return can catch, so it must be prevented, not handled).
-// Oversized/too-deep input returns a structured `error` (`QUERY_TOO_LARGE`,
-// `QUERY_TOO_DEEPLY_NESTED`) instead of ever being parsed.
+// 10,000 bytes AND at most 12 levels of `(`/`[`/`{` nesting, checked before
+// the query ever reaches the parser (`QUERY_TOO_LARGE` / `QUERY_TOO_DEEPLY_
+// NESTED`) — some nested-but-operator-less query shapes are exponential-time
+// in the underlying parser, not just deep, so every parse ALSO runs under a
+// 1.5s wall-clock deadline as a backstop independent of the shape
+// (`QUERY_TOO_COMPLEX` if it fires). None of these are recoverable after the
+// fact — a stack overflow aborts the process and a runaway parse just never
+// returns — so all three are enforced before/around parsing, never after.
 
 syntax = "proto3";
 
@@ -114,7 +116,8 @@ message SearchResponse {
   int32 total_matches = 2;
   // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY, TOO_MANY_DOCUMENTS,
   // DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE, INVALID_ANALYZER, QUERY_TOO_LARGE,
-  // QUERY_TOO_DEEPLY_NESTED, QUERY_PARSE_ERROR); empty on success.
+  // QUERY_TOO_DEEPLY_NESTED, QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR); empty on
+  // success.
   string error = 3;
 }
 
@@ -224,7 +227,7 @@ message SnippetResponse {
   repeated Range highlights = 2;
   // Structured error code (EMPTY_TEXT, EMPTY_QUERY, TEXT_TOO_LARGE,
   // INVALID_ANALYZER, QUERY_TOO_LARGE, QUERY_TOO_DEEPLY_NESTED,
-  // QUERY_PARSE_ERROR); empty on success.
+  // QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR); empty on success.
   string error = 3;
 }
 
@@ -261,6 +264,7 @@ message ExplainResponse {
   // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY,
   // TOO_MANY_DOCUMENTS, DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE,
   // INVALID_ANALYZER, QUERY_TOO_LARGE, QUERY_TOO_DEEPLY_NESTED,
-  // QUERY_PARSE_ERROR, TARGET_NOT_FOUND); empty on success.
+  // QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR, TARGET_NOT_FOUND); empty on
+  // success.
   string error = 4;
 }

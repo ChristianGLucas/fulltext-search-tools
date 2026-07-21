@@ -5,6 +5,9 @@
 // call — nothing here persists across invocations.
 
 use std::collections::HashSet;
+use std::sync::mpsc;
+use std::thread;
+use std::time::Duration;
 
 use tantivy::collector::TopDocs;
 use tantivy::query::{BooleanQuery, Occur, Query, TermQuery};
@@ -21,18 +24,41 @@ pub const MAX_DOCUMENT_BYTES: usize = 1_048_576; // 1 MiB per document
 pub const MAX_TOTAL_BYTES: usize = 8_388_608; // 8 MiB combined
 pub const MAX_TEXT_BYTES: usize = 1_048_576; // 1 MiB for a standalone text input
 pub const MAX_QUERY_BYTES: usize = 10_000; // generous for any real query string
-pub const MAX_QUERY_NESTING_DEPTH: usize = 64; // tantivy's query parser recurses per nesting level
+// tantivy's query grammar is NOT simply "recurse per nesting level and blow
+// the stack" — empirically (see the probe that motivated this constant) a
+// query of adjacent/implicitly-grouped nested clauses with no explicit
+// AND/OR between them (e.g. bare "((((term))))" or nested quoted phrases)
+// costs EXPONENTIAL parse time in the nesting depth: ~300us at depth 4,
+// ~3ms at 8, ~45ms at 12, ~720ms at 16, and it did not return within 3s at
+// depth 20 on ordinary dev hardware. The SAME depth with explicit AND/OR
+// operators between clauses is linear and cheap even past depth 24 — the
+// blowup is specifically the parser's ambiguity-resolution for adjacent
+// clauses, not recursion depth per se. 12 keeps the known-bad shapes under
+// ~50ms with a comfortable margin while still allowing real, human-written
+// nested boolean queries (which essentially never need more than a handful
+// of nesting levels). This is a heuristic fast-reject, not a proof of
+// safety for every possible query shape — see `parse_with_timeout` below
+// for the actual backstop.
+pub const MAX_QUERY_NESTING_DEPTH: usize = 12;
+// Backstop for any pathological query shape the depth heuristic above does
+// not catch (tantivy's grammar is a third-party dependency; its exact set of
+// expensive constructs is not something this package can fully enumerate).
+// A hard wall-clock deadline on the actual parse means a caller NEVER waits
+// indefinitely for a response, regardless of what shape of query triggers
+// the cost — see `parse_with_timeout`.
+pub const QUERY_PARSE_TIMEOUT: Duration = Duration::from_millis(1500);
 pub const DEFAULT_LIMIT: i32 = 10;
 pub const MAX_LIMIT: i32 = 200;
 pub const DEFAULT_SNIPPET_CHARS: usize = 200;
 pub const VALID_ANALYZERS: [&str; 4] = ["default", "en_stem", "whitespace", "raw"];
 
-/// Bound-check a query string BEFORE it ever reaches tantivy's
-/// recursive-descent query parser. tantivy's grammar recurses per level of
-/// `(`/`[`/`{` nesting with no depth limit of its own, so a syntactically
-/// valid but pathologically deep query (e.g. thousands of nested parens) can
-/// blow the call stack and abort the whole process — a crash no `Result`
-/// can catch, so it must be prevented here, before parsing, not caught after.
+/// Bound-check a query string BEFORE it ever reaches tantivy's query parser.
+/// Rejects the empty string, anything over `MAX_QUERY_BYTES`, and anything
+/// nested past `MAX_QUERY_NESTING_DEPTH` levels of `(`/`[`/`{` — a cheap,
+/// fast first-line filter for the known-expensive shapes (see
+/// `MAX_QUERY_NESTING_DEPTH`'s doc). This alone is a heuristic, not a proof
+/// of safety; every actual parse additionally runs under
+/// `parse_with_timeout`'s wall-clock deadline as the real backstop.
 pub fn validate_query(query: &str) -> Result<(), &'static str> {
     if query.trim().is_empty() {
         return Err("EMPTY_QUERY");
@@ -52,6 +78,29 @@ pub fn validate_query(query: &str) -> Result<(), &'static str> {
         }
     }
     Ok(())
+}
+
+/// Run `f` (a query parse) on its own thread with a hard `QUERY_PARSE_TIMEOUT`
+/// wall-clock deadline. tantivy's query grammar has an empirically-confirmed
+/// exponential-time worst case (see `MAX_QUERY_NESTING_DEPTH`) that a fixed
+/// heuristic cannot fully rule out for every possible query shape — this is
+/// the actual backstop: if `f` has not finished within the deadline, the
+/// caller gets a clean structured error immediately instead of hanging. The
+/// spawned thread is deliberately abandoned rather than joined/cancelled (Rust
+/// has no safe thread-cancellation primitive) — a still-running pathological
+/// parse can keep consuming CPU in the background until it completes or the
+/// process recycles, but it can no longer make a CALLER wait indefinitely,
+/// which is the failure mode this exists to close.
+pub fn parse_with_timeout<T, F>(f: F) -> Result<T, &'static str>
+where
+    T: Send + 'static,
+    F: FnOnce() -> T + Send + 'static,
+{
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || {
+        let _ = tx.send(f());
+    });
+    rx.recv_timeout(QUERY_PARSE_TIMEOUT).map_err(|_| "QUERY_TOO_COMPLEX")
 }
 
 /// Validate `analyzer`, defaulting empty to "default". Returns the resolved
@@ -246,6 +295,47 @@ pub fn walk_query_terms(query: &dyn Query, occur: Occur, schema: &Schema, out: &
         }
     };
     query.query_terms(&mut visitor);
+}
+
+#[cfg(test)]
+mod ftsutil_tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_with_timeout_bounds_a_runaway_closure() {
+        // Proves the timeout mechanism itself works, independent of any real
+        // tantivy query shape: a closure that sleeps far longer than
+        // QUERY_PARSE_TIMEOUT must still return promptly with a structured
+        // error, not block the caller.
+        let start = std::time::Instant::now();
+        let result: Result<i32, &'static str> =
+            parse_with_timeout(|| { thread::sleep(Duration::from_secs(10)); 42 });
+        let elapsed = start.elapsed();
+        assert_eq!(result, Err("QUERY_TOO_COMPLEX"));
+        assert!(
+            elapsed < Duration::from_secs(3),
+            "parse_with_timeout must return near its deadline, not wait for the closure; took {elapsed:?}"
+        );
+    }
+
+    #[test]
+    fn test_parse_with_timeout_passes_through_a_fast_result() {
+        let result = parse_with_timeout(|| 7);
+        assert_eq!(result, Ok(7));
+    }
+
+    #[test]
+    fn test_query_nesting_depth_cap_rejects_the_known_exponential_shape_fast() {
+        // Regression for the finding this module exists to close: bare nested
+        // parens with no explicit operator between clauses is the shape that
+        // was empirically confirmed exponential in tantivy 0.26.1's parser.
+        // At MAX_QUERY_NESTING_DEPTH + 1 it must be rejected by the cheap
+        // depth check, never reaching the parser at all.
+        let deep = "(".repeat(MAX_QUERY_NESTING_DEPTH + 1) + "term" + &")".repeat(MAX_QUERY_NESTING_DEPTH + 1);
+        let start = std::time::Instant::now();
+        assert_eq!(validate_query(&deep), Err("QUERY_TOO_DEEPLY_NESTED"));
+        assert!(start.elapsed() < Duration::from_millis(50), "the depth check itself must be O(n), not exponential");
+    }
 }
 
 /// Byte ranges (into `text`, using the same analyzer that indexed it) of

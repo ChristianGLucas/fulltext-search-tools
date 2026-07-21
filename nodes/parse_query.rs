@@ -30,8 +30,15 @@ pub fn parse_query(
 
     let (schema, text_field) = ftsutil::build_text_only_schema(&analyzer_name);
     let query_parser = QueryParser::new(schema.clone(), vec![text_field], TokenizerManager::default());
+    let query_string = input.query.clone();
+    let parsed = match ftsutil::parse_with_timeout(move || query_parser.parse_query(&query_string)) {
+        Ok(inner) => inner,
+        Err(code) => {
+            return Ok(ParseQueryResponse { valid: false, error: code.to_string(), ..Default::default() })
+        }
+    };
 
-    match query_parser.parse_query(&input.query) {
+    match parsed {
         Ok(query) => {
             let debug_representation = format!("{query:?}");
             let mut terms = Vec::new();
