@@ -1,0 +1,260 @@
+// Data contracts for christiangeorgelucas/fulltext-search-tools — stateless
+// full-text search and ranking nodes wrapping the MIT/Apache-2.0 Rust
+// `tantivy` library (the engine behind Quickwit; Lucene-equivalent BM25
+// scoring, query parsing, tokenization, and snippet generation).
+//
+// STATELESS BY DESIGN. Every node builds an ephemeral, purely in-memory
+// tantivy index from the documents/text given in that single call, uses it,
+// and discards it before returning — nothing is persisted or cached across
+// invocations. Given the same documents, query, and analyzer, results are
+// deterministic (single-segment index, fixed BM25 k1=1.2/b=0.75).
+//
+// COMPOSABILITY. The `text` field on Document (and the plain `text` input on
+// Tokenize/Snippet) deliberately matches the `text` field already used by
+// christiangeorgelucas/ocr-tools, pdf-tools, html-tools, and nlp-tools, so
+// their text output flows straight into this package with a trivial mapping.
+// Offset fields (`start`/`end`, byte offsets into the source text) follow the
+// same convention nlp-tools established for Token/Entity/Sentence.
+//
+// ANALYZER. `analyzer` selects the tokenizer/filter pipeline applied to both
+// indexed document text and the query: "default" (Unicode-aware word
+// splitting + lowercasing, tantivy's SimpleTokenizer), "en_stem" (default +
+// English Porter stemming), "whitespace" (split on whitespace only, no
+// lowercasing), or "raw" (the entire input is a single token, exact-match,
+// case-sensitive). Empty selects "default". An unrecognized value is a
+// structured error, never a silent fallback. NOTE on "raw" with multi-word
+// text: the query grammar itself splits an unquoted query on whitespace
+// before any per-field analysis runs, so an unquoted multi-word query is
+// several OR'd single-word terms, not one raw token — wrap a multi-word
+// "raw" query in double quotes (a phrase query) to match the whole field
+// value exactly, e.g. query `"Exact Match"`.
+//
+// SIZE BOUNDS. Per call: at most 1,000 documents, each at most 1 MiB of text,
+// combined at most 8 MiB. Oversized input returns a structured `error`
+// instead of building the index.
+
+syntax = "proto3";
+
+package christiangeorgelucas.fulltext_search_tools;
+
+option go_package = ".;gen";
+
+// One document to index: caller-supplied identity plus its searchable body.
+message Document {
+  // Caller-supplied identifier, echoed back on any Hit for this document.
+  // If empty, the document's 0-based position in the input list (as a
+  // decimal string) is used instead.
+  string id = 1;
+  // The document's body text to index and search. Matches the `text` field
+  // convention used across ocr-tools/pdf-tools/html-tools/nlp-tools.
+  string text = 2;
+}
+
+// A half-open [start, end) byte range into a piece of text — for example the
+// span of a highlighted match. Byte offsets, not character/rune offsets,
+// matching nlp-tools' Token/Entity/Sentence offset convention.
+message Range {
+  int32 start = 1;
+  int32 end = 2;
+}
+
+// Input for Search: a small document set, a query, and how to rank/return it.
+message SearchRequest {
+  // The documents to build an ephemeral index over and search. 1-1000
+  // documents; combined text at most 8 MiB, each document's text at most 1
+  // MiB. Empty is a structured error (EMPTY_DOCUMENTS).
+  repeated Document documents = 1;
+  // Query text in tantivy's query syntax: bare terms are ORed by default,
+  // `+term` requires it, `-term` excludes it, `"phrase words"` for an exact
+  // phrase, `field:term` is unnecessary here (single "text" field) but
+  // tolerated. Empty is a structured error (EMPTY_QUERY).
+  string query = 2;
+  // Tokenizer/analyzer pipeline; see the file-level ANALYZER doc. Empty
+  // means "default".
+  string analyzer = 3;
+  // Maximum number of ranked hits to return. <=0 defaults to 10; hard-capped
+  // at 200 regardless of the value given.
+  int32 limit = 4;
+  // When > 0, each hit's `snippet` is a highlighted fragment of at most this
+  // many characters built around the best-scoring match region. 0 disables
+  // snippet generation (snippet is left empty, but `highlights` byte ranges
+  // are still computed against the full document text).
+  int32 snippet_max_chars = 5;
+}
+
+// One ranked search result.
+message Hit {
+  // The matched document's id (echoed from Document.id, or its input index
+  // if id was empty).
+  string id = 1;
+  // The matched document's 0-based position in the input `documents` list.
+  int32 doc_index = 2;
+  // BM25 relevance score (higher is more relevant). Not normalized/bounded;
+  // only meaningful relative to other hits from the same call.
+  double score = 3;
+  // A highlighted snippet of the document text (see snippet_max_chars);
+  // empty when snippet_max_chars <= 0.
+  string snippet = 4;
+  // Byte ranges of every query-term match found in the full document text,
+  // in ascending order.
+  repeated Range highlights = 5;
+}
+
+// Result of a Search call.
+message SearchResponse {
+  // Ranked hits, best match first, truncated to `limit`.
+  repeated Hit hits = 1;
+  // Total number of documents that matched the query (may exceed the number
+  // of hits returned when limit truncated the result).
+  int32 total_matches = 2;
+  // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY, TOO_MANY_DOCUMENTS,
+  // DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE, INVALID_ANALYZER,
+  // QUERY_PARSE_ERROR); empty on success.
+  string error = 3;
+}
+
+// Input for Tokenize: run the analyzer pipeline over raw text and return the
+// resulting token stream, independent of any indexing/search.
+message TokenizeRequest {
+  // The text to tokenize. At most 1 MiB. Empty is a structured error
+  // (EMPTY_TEXT).
+  string text = 1;
+  // Tokenizer/analyzer pipeline; see the file-level ANALYZER doc. Empty
+  // means "default".
+  string analyzer = 2;
+}
+
+// A single token produced by the analyzer.
+message Token {
+  // The token's text after the analyzer's transformations (e.g. lowercased,
+  // stemmed) — not necessarily a literal substring of the input.
+  string text = 1;
+  // 0-based ordinal position of this token in the stream (used for phrase
+  // proximity; skips are possible if the analyzer drops tokens).
+  int32 position = 2;
+  // Byte offset of the token's first character in the original input text.
+  int32 start = 3;
+  // Byte offset one past the token's last character in the original input
+  // text.
+  int32 end = 4;
+}
+
+// Result of a Tokenize call.
+message TokenizeResponse {
+  // Tokens in stream order.
+  repeated Token tokens = 1;
+  // Structured error code (EMPTY_TEXT, TEXT_TOO_LARGE, INVALID_ANALYZER);
+  // empty on success.
+  string error = 2;
+}
+
+// Input for ParseQuery: validate and structurally decompose query syntax
+// without running a search — useful for validating user-typed queries or
+// inspecting how they resolve before spending an index build.
+message ParseQueryRequest {
+  // Query text in tantivy's query syntax (see SearchRequest.query).
+  string query = 1;
+  // Tokenizer/analyzer pipeline applied to the query's own terms; see the
+  // file-level ANALYZER doc. Empty means "default".
+  string analyzer = 2;
+}
+
+// One term extracted from a parsed query, with how it participates in
+// matching.
+message QueryTerm {
+  // The field this term matches against (always "text" — the single indexed
+  // field every node in this package uses).
+  string field = 1;
+  // The term's literal text after analysis (lowercased/stemmed per the
+  // chosen analyzer).
+  string term = 2;
+  // How this term combines with the rest of the query: "MUST" (required,
+  // from a bare or `+` term), "SHOULD" (optional, contributes to scoring),
+  // or "MUST_NOT" (excludes matching documents, from a `-` term).
+  string occur = 3;
+}
+
+// Result of a ParseQuery call.
+message ParseQueryResponse {
+  // True when `query` parsed successfully under tantivy's query grammar.
+  bool valid = 1;
+  // The individual terms the query decomposes into, in parse order. Empty
+  // when valid is false.
+  repeated QueryTerm terms = 2;
+  // A human-readable, deterministic debug rendering of the parsed query
+  // tree (tantivy's own Debug format), useful for understanding precedence
+  // and how phrase/boolean operators were grouped. Empty when valid is
+  // false.
+  string debug_representation = 3;
+  // Structured error message describing why the query failed to parse;
+  // empty when valid is true.
+  string error = 4;
+}
+
+// Input for Snippet: generate a highlighted excerpt of a single piece of
+// text for a given query, without building a document set. Useful for
+// re-snippeting text a caller already has (e.g. after paging through a
+// separately-obtained result set).
+message SnippetRequest {
+  // The text to excerpt from. At most 1 MiB. Empty is a structured error
+  // (EMPTY_TEXT).
+  string text = 1;
+  // Query text in tantivy's query syntax (see SearchRequest.query). Empty
+  // is a structured error (EMPTY_QUERY).
+  string query = 2;
+  // Tokenizer/analyzer pipeline; see the file-level ANALYZER doc. Empty
+  // means "default".
+  string analyzer = 3;
+  // Maximum snippet length in characters. <=0 defaults to 200.
+  int32 max_chars = 4;
+}
+
+// Result of a Snippet call.
+message SnippetResponse {
+  // The highlighted excerpt (plain text; use `highlights` to know which
+  // byte ranges within it, and within the ranges below, matched).
+  string snippet = 1;
+  // Byte ranges of query-term matches within the ORIGINAL `text` (not the
+  // snippet substring), in ascending order.
+  repeated Range highlights = 2;
+  // Structured error code (EMPTY_TEXT, EMPTY_QUERY, TEXT_TOO_LARGE,
+  // INVALID_ANALYZER, QUERY_PARSE_ERROR); empty on success.
+  string error = 3;
+}
+
+// Input for Explain: show the BM25 score breakdown for one specific document
+// against a query — why it ranked where it would in Search.
+message ExplainRequest {
+  // The documents to build the ephemeral index over (same bounds as
+  // SearchRequest.documents). The BM25 statistics (IDF, average field
+  // length) that the explanation is computed against depend on this whole
+  // set, exactly as they would in a Search call over the same documents.
+  repeated Document documents = 1;
+  // Query text in tantivy's query syntax (see SearchRequest.query).
+  string query = 2;
+  // Tokenizer/analyzer pipeline; see the file-level ANALYZER doc. Empty
+  // means "default".
+  string analyzer = 3;
+  // Which document to explain: matches Document.id if set on that document,
+  // otherwise its 0-based input index as a decimal string (same rule as
+  // Hit.id). Required.
+  string target_id = 4;
+}
+
+// Result of an Explain call.
+message ExplainResponse {
+  // The document's BM25 score for this query; 0 when it does not match.
+  double score = 1;
+  // Whether the target document matches the query at all.
+  bool matched = 2;
+  // A human-readable, deterministic breakdown of how `score` was computed
+  // (per-term contribution: term frequency, inverse document frequency,
+  // field-length normalization) — tantivy's own explanation tree rendered
+  // as pretty JSON.
+  string explanation = 3;
+  // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY,
+  // TOO_MANY_DOCUMENTS, DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE,
+  // INVALID_ANALYZER, QUERY_PARSE_ERROR, TARGET_NOT_FOUND); empty on
+  // success.
+  string error = 4;
+}

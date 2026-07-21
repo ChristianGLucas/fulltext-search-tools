@@ -1,0 +1,25 @@
+name: christiangeorgelucas/fulltext-search-tools
+version: 0.1.0
+language: rust
+description: Composable Axiom full-text search & ranking nodes wrapping the MIT/Apache-2.0 Rust tantivy library (Quickwit's engine, Lucene-equivalent BM25). Each call builds a purely ephemeral in-memory index over the documents given, searches it, and discards it — search with BM25 scores/highlights/snippets, query parsing, tokenization/analysis, snippet generation, and score explanation. Offline and deterministic.
+nodes:
+    - name: Search
+      input: SearchRequest
+      output: SearchResponse
+      description: Build an ephemeral in-memory index over the given documents, run a query against it, and return BM25-ranked hits with per-hit highlighted snippets and match offsets, then discard the index. Stateless and deterministic for a fixed analyzer.
+    - name: Tokenize
+      input: TokenizeRequest
+      output: TokenizeResponse
+      description: Run tantivy's tokenizer/analyzer pipeline (default, en_stem, whitespace, or raw) over raw text and return the resulting token stream with each token's stream position and byte offsets into the original text.
+    - name: ParseQuery
+      input: ParseQueryRequest
+      output: ParseQueryResponse
+      description: Validate and structurally decompose a tantivy query string into its individual terms (with field and MUST/SHOULD/MUST_NOT occurrence) and a debug rendering of the parsed query tree, without building an index or running a search.
+    - name: Snippet
+      input: SnippetRequest
+      output: SnippetResponse
+      description: Generate a highlighted excerpt of a single piece of text for a query, with byte-offset match ranges into the original text — for re-snippeting text a caller already has without re-indexing a document set.
+    - name: Explain
+      input: ExplainRequest
+      output: ExplainResponse
+      description: Build an ephemeral index over the given documents and return the BM25 score breakdown (per-term frequency, IDF, field-length normalization) for one target document against a query — why it would rank where it does in Search.
