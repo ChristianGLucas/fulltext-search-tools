@@ -120,14 +120,6 @@ mod tests {
     }
 
     #[test]
-    fn test_tokenize_text_too_large_is_structured_error() {
-        let ax = test_context();
-        let input = TokenizeRequest { text: "x".repeat(1_048_577), analyzer: String::new() };
-        let result = tokenize(&ax, input).unwrap();
-        assert_eq!(result.error, "TEXT_TOO_LARGE");
-    }
-
-    #[test]
     fn test_tokenize_invalid_analyzer_is_structured_error() {
         let ax = test_context();
         let input = TokenizeRequest { text: "hi".to_string(), analyzer: "bogus".to_string() };

@@ -15,10 +15,50 @@ pub trait AxiomLogger: Send + Sync {
     fn error(&self, msg: &str, attrs: &HashMap<&str, String>);
 }
 
+/// Typed result of `AxiomSecrets::status(name)` — ADR-156.
+///
+/// `get(name)` alone returns `("", false)` both when a secret was revoked
+/// after execution start and when it was never configured at all — a node
+/// cannot tell "re-authorize this credential" from "check axiom.yaml" from
+/// that result alone. Use `status()` when the distinction matters.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SecretStatus {
+    /// The secret currently resolves to a value; `get(name)` returns it.
+    Available,
+    /// The secret existed in this execution's initial snapshot but no
+    /// longer resolves against the live vault — it was deleted or revoked
+    /// after the execution started. `get(name)` returns `("", false)`.
+    Revoked,
+    /// The secret was never present for this node — never configured by
+    /// the tenant, or (for a non-owned node) not authorized. `get(name)`
+    /// returns `("", false)`, identically to `Revoked`.
+    Unset,
+}
+
 /// Read-only access to tenant secrets resolved by the platform.
 pub trait AxiomSecrets: Send + Sync {
     /// Returns `(value, true)` when the named secret is present, else `("", false)`.
     fn get(&self, name: &str) -> (String, bool);
+
+    /// Returns the typed status of a declared secret — ADR-156. Distinguishes
+    /// `SecretStatus::Revoked` (declared, existed at execution start, no
+    /// longer resolvable) from `SecretStatus::Unset` (never configured) — a
+    /// distinction `get` alone cannot make since both return `("", false)`.
+    ///
+    /// ADR-156 (2026-07-20): this is a DEFAULT method, not a required one, so
+    /// the accessor stays BACKWARD-COMPATIBLE — a required trait method would
+    /// break every existing node's hand-written `AxiomSecrets` test double at
+    /// compile time. The platform's `MapSecrets` overrides it with the real
+    /// Available/Revoked/Unset distinction; an implementer that only provides
+    /// `get` degrades to Available (present) or Unset (absent), never a false
+    /// Revoked.
+    fn status(&self, name: &str) -> SecretStatus {
+        if self.get(name).1 {
+            SecretStatus::Available
+        } else {
+            SecretStatus::Unset
+        }
+    }
 }
 
 // ADR-129 (2026-07-11): agentic memory (ax.agent().memory()) is out of scope

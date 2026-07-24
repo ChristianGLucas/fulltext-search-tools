@@ -29,15 +29,14 @@
 // "raw" query in double quotes (a phrase query) to match the whole field
 // value exactly, e.g. query `"Exact Match"`.
 //
-// SIZE BOUNDS. Per call: at most 1,000 documents, each at most 1 MiB of text,
-// combined at most 8 MiB. Every `query` string, on every node, is at most
-// 10,000 bytes AND at most 12 levels of `(`/`[`/`{` nesting, checked before
-// the query ever reaches the parser (`QUERY_TOO_LARGE` / `QUERY_TOO_DEEPLY_
-// NESTED`) — some nested-but-operator-less query shapes are exponential-time
-// in the underlying parser, not just deep, so every parse ALSO runs under a
-// 1.5s wall-clock deadline as a backstop independent of the shape
-// (`QUERY_TOO_COMPLEX` if it fires). None of these are recoverable after the
-// fact — a stack overflow aborts the process and a runaway parse just never
+// QUERY SAFETY. Every `query` string, on every node, is checked for
+// `(`/`[`/`{` nesting past 12 levels before it ever reaches the parser
+// (`QUERY_TOO_DEEPLY_NESTED`) — some nested-but-operator-less query shapes
+// are exponential-time in the underlying parser, not just deep, so every
+// parse ALSO runs under a 1.5s wall-clock deadline as a backstop independent
+// of the shape (`QUERY_TOO_COMPLEX` if it fires). Neither is recoverable
+// after the fact — a stack overflow aborts the process and a runaway parse
+// just never
 // returns — so all three are enforced before/around parsing, never after.
 
 syntax = "proto3";
@@ -79,8 +78,7 @@ message SearchRequest {
   // Tokenizer/analyzer pipeline; see the file-level ANALYZER doc. Empty
   // means "default".
   string analyzer = 3;
-  // Maximum number of ranked hits to return. <=0 defaults to 10; hard-capped
-  // at 200 regardless of the value given.
+  // Maximum number of ranked hits to return. <=0 defaults to 10.
   int32 limit = 4;
   // When > 0, each hit's `snippet` is a highlighted fragment of at most this
   // many characters built around the best-scoring match region. 0 disables
@@ -114,8 +112,7 @@ message SearchResponse {
   // Total number of documents that matched the query (may exceed the number
   // of hits returned when limit truncated the result).
   int32 total_matches = 2;
-  // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY, TOO_MANY_DOCUMENTS,
-  // DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE, INVALID_ANALYZER, QUERY_TOO_LARGE,
+  // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY, INVALID_ANALYZER,
   // QUERY_TOO_DEEPLY_NESTED, QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR); empty on
   // success.
   string error = 3;
@@ -151,8 +148,7 @@ message Token {
 message TokenizeResponse {
   // Tokens in stream order.
   repeated Token tokens = 1;
-  // Structured error code (EMPTY_TEXT, TEXT_TOO_LARGE, INVALID_ANALYZER);
-  // empty on success.
+  // Structured error code (EMPTY_TEXT, INVALID_ANALYZER); empty on success.
   string error = 2;
 }
 
@@ -225,9 +221,9 @@ message SnippetResponse {
   // Byte ranges of query-term matches within the ORIGINAL `text` (not the
   // snippet substring), in ascending order.
   repeated Range highlights = 2;
-  // Structured error code (EMPTY_TEXT, EMPTY_QUERY, TEXT_TOO_LARGE,
-  // INVALID_ANALYZER, QUERY_TOO_LARGE, QUERY_TOO_DEEPLY_NESTED,
-  // QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR); empty on success.
+  // Structured error code (EMPTY_TEXT, EMPTY_QUERY, INVALID_ANALYZER,
+  // QUERY_TOO_DEEPLY_NESTED, QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR); empty on
+  // success.
   string error = 3;
 }
 
@@ -261,10 +257,8 @@ message ExplainResponse {
   // field-length normalization) — tantivy's own explanation tree rendered
   // as pretty JSON.
   string explanation = 3;
-  // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY,
-  // TOO_MANY_DOCUMENTS, DOCUMENT_TOO_LARGE, INPUT_TOO_LARGE,
-  // INVALID_ANALYZER, QUERY_TOO_LARGE, QUERY_TOO_DEEPLY_NESTED,
-  // QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR, TARGET_NOT_FOUND); empty on
-  // success.
+  // Structured error code (EMPTY_DOCUMENTS, EMPTY_QUERY, INVALID_ANALYZER,
+  // QUERY_TOO_DEEPLY_NESTED, QUERY_TOO_COMPLEX, QUERY_PARSE_ERROR,
+  // TARGET_NOT_FOUND); empty on success.
   string error = 4;
 }

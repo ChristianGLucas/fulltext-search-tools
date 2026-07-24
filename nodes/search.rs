@@ -49,11 +49,7 @@ pub fn search(
         Err(code) => return Ok(SearchResponse { error: code.to_string(), ..Default::default() }),
     };
 
-    let limit = if input.limit <= 0 {
-        ftsutil::DEFAULT_LIMIT
-    } else {
-        input.limit.min(ftsutil::MAX_LIMIT)
-    } as usize;
+    let limit = if input.limit <= 0 { ftsutil::DEFAULT_LIMIT } else { input.limit } as usize;
 
     let top_docs = searcher.search(&query, &TopDocs::with_limit(limit).order_by_score())?;
     let total_matches = query.count(&searcher)? as i32;

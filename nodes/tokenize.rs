@@ -17,9 +17,6 @@ pub fn tokenize(
     if input.text.is_empty() {
         return Ok(TokenizeResponse { tokens: vec![], error: "EMPTY_TEXT".to_string() });
     }
-    if input.text.len() > ftsutil::MAX_TEXT_BYTES {
-        return Ok(TokenizeResponse { tokens: vec![], error: "TEXT_TOO_LARGE".to_string() });
-    }
     let analyzer_name = match ftsutil::normalize_analyzer(&input.analyzer) {
         Ok(n) => n,
         Err(code) => return Ok(TokenizeResponse { tokens: vec![], error: code.to_string() }),

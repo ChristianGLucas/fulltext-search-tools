@@ -19,11 +19,6 @@ use tantivy::{doc, Index, IndexWriter, TantivyDocument, Term};
 
 use crate::gen::messages::Document;
 
-pub const MAX_DOCUMENTS: usize = 1000;
-pub const MAX_DOCUMENT_BYTES: usize = 1_048_576; // 1 MiB per document
-pub const MAX_TOTAL_BYTES: usize = 8_388_608; // 8 MiB combined
-pub const MAX_TEXT_BYTES: usize = 1_048_576; // 1 MiB for a standalone text input
-pub const MAX_QUERY_BYTES: usize = 10_000; // generous for any real query string
 // tantivy's query grammar is NOT simply "recurse per nesting level and blow
 // the stack" — empirically (see the probe that motivated this constant) a
 // query of adjacent/implicitly-grouped nested clauses with no explicit
@@ -48,23 +43,19 @@ pub const MAX_QUERY_NESTING_DEPTH: usize = 12;
 // the cost — see `parse_with_timeout`.
 pub const QUERY_PARSE_TIMEOUT: Duration = Duration::from_millis(1500);
 pub const DEFAULT_LIMIT: i32 = 10;
-pub const MAX_LIMIT: i32 = 200;
 pub const DEFAULT_SNIPPET_CHARS: usize = 200;
 pub const VALID_ANALYZERS: [&str; 4] = ["default", "en_stem", "whitespace", "raw"];
 
 /// Bound-check a query string BEFORE it ever reaches tantivy's query parser.
-/// Rejects the empty string, anything over `MAX_QUERY_BYTES`, and anything
-/// nested past `MAX_QUERY_NESTING_DEPTH` levels of `(`/`[`/`{` — a cheap,
-/// fast first-line filter for the known-expensive shapes (see
+/// Rejects the empty string and anything nested past
+/// `MAX_QUERY_NESTING_DEPTH` levels of `(`/`[`/`{` — a cheap, fast
+/// first-line filter for the known-expensive shapes (see
 /// `MAX_QUERY_NESTING_DEPTH`'s doc). This alone is a heuristic, not a proof
 /// of safety; every actual parse additionally runs under
 /// `parse_with_timeout`'s wall-clock deadline as the real backstop.
 pub fn validate_query(query: &str) -> Result<(), &'static str> {
     if query.trim().is_empty() {
         return Err("EMPTY_QUERY");
-    }
-    if query.len() > MAX_QUERY_BYTES {
-        return Err("QUERY_TOO_LARGE");
     }
     let mut depth: i64 = 0;
     for c in query.chars() {
@@ -118,20 +109,6 @@ pub fn normalize_analyzer(analyzer: &str) -> Result<String, &'static str> {
 pub fn validate_documents(docs: &[Document]) -> Result<(), &'static str> {
     if docs.is_empty() {
         return Err("EMPTY_DOCUMENTS");
-    }
-    if docs.len() > MAX_DOCUMENTS {
-        return Err("TOO_MANY_DOCUMENTS");
-    }
-    let mut total: usize = 0;
-    for d in docs {
-        let n = d.text.len();
-        if n > MAX_DOCUMENT_BYTES {
-            return Err("DOCUMENT_TOO_LARGE");
-        }
-        total = total.saturating_add(n);
-        if total > MAX_TOTAL_BYTES {
-            return Err("INPUT_TOO_LARGE");
-        }
     }
     Ok(())
 }

@@ -245,35 +245,6 @@ mod tests {
     }
 
     #[test]
-    fn test_search_oversized_query_is_structured_error() {
-        let ax = test_context();
-        let huge_query = "term ".repeat(3000); // well over 10,000 bytes
-        let input =
-            SearchRequest { documents: vec![doc("a", "hi")], query: huge_query, ..Default::default() };
-        let result = search(&ax, input).unwrap();
-        assert_eq!(result.error, "QUERY_TOO_LARGE");
-    }
-
-    #[test]
-    fn test_search_too_many_documents_is_structured_error() {
-        let ax = test_context();
-        let documents: Vec<Document> = (0..1001).map(|i| doc(&i.to_string(), "x")).collect();
-        let input = SearchRequest { documents, query: "x".to_string(), ..Default::default() };
-        let result = search(&ax, input).unwrap();
-        assert_eq!(result.error, "TOO_MANY_DOCUMENTS");
-    }
-
-    #[test]
-    fn test_search_document_too_large_is_structured_error() {
-        let ax = test_context();
-        let huge = "x".repeat(1_048_577);
-        let input =
-            SearchRequest { documents: vec![doc("a", &huge)], query: "x".to_string(), ..Default::default() };
-        let result = search(&ax, input).unwrap();
-        assert_eq!(result.error, "DOCUMENT_TOO_LARGE");
-    }
-
-    #[test]
     fn test_search_invalid_analyzer_is_structured_error_not_silent_fallback() {
         let ax = test_context();
         let input = SearchRequest {
@@ -299,7 +270,7 @@ mod tests {
     }
 
     #[test]
-    fn test_search_limit_defaults_and_caps() {
+    fn test_search_limit_defaults_when_non_positive() {
         let ax = test_context();
         let documents: Vec<Document> = (0..5).map(|i| doc(&i.to_string(), "match term")).collect();
         let input =

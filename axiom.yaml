@@ -1,5 +1,5 @@
 name: christiangeorgelucas/fulltext-search-tools
-version: 0.1.0
+version: 0.1.1
 language: rust
 description: Composable Axiom full-text search & ranking nodes wrapping the MIT/Apache-2.0 Rust tantivy library (Quickwit's engine, Lucene-equivalent BM25). Each call builds a purely ephemeral in-memory index over the documents given, searches it, and discards it — search with BM25 scores/highlights/snippets, query parsing, tokenization/analysis, snippet generation, and score explanation. Offline and deterministic.
 nodes:
